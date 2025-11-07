@@ -8,7 +8,7 @@ import numpy as np
 
 # Set page config with enhanced styling
 st.set_page_config(
-    page_title="AQI-Insight",
+    page_title="Air Quality Prediction using Machine Learning Approach",
     page_icon="🌍",
     layout="wide",
     initial_sidebar_state="expanded"
