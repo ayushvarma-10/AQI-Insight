@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from data_fetch import fetch_data, get_historical_aqi_data
-from analysis import create_aqi_gauge, create_weather_bar_chart, analyze_pollutants, get_aqi_category, create_aqi_prediction_chart, create_prediction_accuracy_chart
+from analysis import create_aqi_gauge, create_weather_bar_chart, analyze_pollutants, get_aqi_category, create_aqi_prediction_chart, create_prediction_accuracy_chart, create_health_impact_recommendations, create_seasonal_trends_chart, create_comparative_analysis_chart
 from ml_model import AQIPredictor, train_aqi_model, make_predictions
 import os
 import numpy as np
@@ -469,6 +469,16 @@ if st.button("Search"):
             recent_data = [data['aqi']] * 24  # Use current AQI as recent data
             predictions = make_predictions(predictor, recent_data, prediction_steps=24)
 
+            # Prepare features for enhanced predictions if available
+            features = None
+            try:
+                from ml_model import prepare_features_data
+                historical_data = get_historical_aqi_data(data['city'], days=7)
+                if len(historical_data) >= 24:
+                    features = prepare_features_data(historical_data)
+            except Exception as e:
+                features = None
+
             # Display predictions
             st.markdown(f"<h4 style='color: white; text-align: center; margin-bottom: 20px;'>Next 24-Hour AQI Forecast for {data['city']}</h4>", unsafe_allow_html=True)
 
@@ -494,28 +504,95 @@ if st.button("Search"):
                 st.markdown('</div>', unsafe_allow_html=True)
 
             # Model accuracy section (if available)
-            if os.path.exists('aqi_model.h5'):
+            model_path = f'aqi_model_{data["city"].lower().replace(" ", "_")}.h5'
+            if os.path.exists(model_path):
                 st.markdown("""
                 <div style="background: rgba(255, 255, 255, 0.05); border-radius: 15px; padding: 20px; margin: 20px 0; border: 1px solid rgba(255, 255, 255, 0.1);">
                     <h4 style="color: #4ECDC4; text-align: center; margin-bottom: 15px;">📊 Model Performance</h4>
                 """, unsafe_allow_html=True)
 
-                # Mock accuracy data for demonstration
-                accuracy_data = {
-                    'MAE': 8.5,
-                    'RMSE': 12.3,
-                    'R² Score': 0.87
-                }
+                # Evaluate model performance
+                try:
+                    # Get historical data for evaluation
+                    historical_data = get_historical_aqi_data(data['city'], days=7)
+                    if len(historical_data) >= 24:
+                        actual_values = [d['aqi'] for d in historical_data[-24:]]
+                        predicted_values = predictor.predict(np.array(actual_values).reshape(-1, 1), steps=24)
+                        eval_metrics = predictor.evaluate(actual_values, predicted_values)
 
-                acc_col1, acc_col2, acc_col3 = st.columns(3)
-                with acc_col1:
-                    st.metric("Mean Absolute Error", f"{accuracy_data['MAE']:.1f}")
-                with acc_col2:
-                    st.metric("Root Mean Square Error", f"{accuracy_data['RMSE']:.1f}")
-                with acc_col3:
-                    st.metric("R² Score", f"{accuracy_data['R² Score']:.2f}")
+                        acc_col1, acc_col2, acc_col3, acc_col4 = st.columns(4)
+                        with acc_col1:
+                            st.metric("MAE", f"{eval_metrics['MAE']:.1f}")
+                        with acc_col2:
+                            st.metric("RMSE", f"{eval_metrics['RMSE']:.1f}")
+                        with acc_col3:
+                            st.metric("MAPE", f"{eval_metrics['MAPE']:.1f}%")
+                        with acc_col4:
+                            st.metric("R² Score", f"{eval_metrics['R2']:.2f}")
+                    else:
+                        st.info("Insufficient historical data for detailed evaluation.")
+                except Exception as e:
+                    st.warning(f"Could not evaluate model performance: {str(e)}")
 
                 st.markdown("</div>", unsafe_allow_html=True)
+
+            # Health Impact Recommendations
+            st.markdown("""
+            <div style="background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(20px); border-radius: 20px; padding: 30px; margin: 20px 0; border: 1px solid rgba(255, 255, 255, 0.2);">
+                <h3 style="color: #FFD700; text-align: center; margin-bottom: 20px; font-weight: 600;">🏥 Health Impact & Recommendations</h3>
+            """, unsafe_allow_html=True)
+
+            category, _ = get_aqi_category(aqi)
+            recommendations = create_health_impact_recommendations(aqi, category)
+
+            rec_col1, rec_col2 = st.columns(2)
+            with rec_col1:
+                st.markdown(f"**Health Impact:** {recommendations['impact']}")
+                st.markdown(f"**Affected Groups:** {recommendations['groups']}")
+            with rec_col2:
+                st.markdown(f"**Recommendations:** {recommendations['advice']}")
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Seasonal Trends (if historical data available)
+            try:
+                historical_data = get_historical_aqi_data(data['city'], days=30)
+                if len(historical_data) >= 7:
+                    st.markdown("""
+                    <div style="background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(20px); border-radius: 20px; padding: 30px; margin: 20px 0; border: 1px solid rgba(255, 255, 255, 0.2);">
+                        <h3 style="color: #FFD700; text-align: center; margin-bottom: 20px; font-weight: 600;">📈 Seasonal AQI Trends</h3>
+                    """, unsafe_allow_html=True)
+                    seasonal_chart = create_seasonal_trends_chart(historical_data, data['city'])
+                    if seasonal_chart:
+                        st.plotly_chart(seasonal_chart, use_container_width=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+            except Exception as e:
+                st.info("Seasonal trend analysis requires more historical data.")
+
+            # Comparative Analysis
+            st.markdown("""
+            <div style="background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(20px); border-radius: 20px; padding: 30px; margin: 20px 0; border: 1px solid rgba(255, 255, 255, 0.2);">
+                <h3 style="color: #FFD700; text-align: center; margin-bottom: 20px; font-weight: 600;">🌍 Comparative Analysis</h3>
+            """, unsafe_allow_html=True)
+
+            # Get data for comparison cities
+            comparison_cities = ['Delhi', 'Mumbai', 'Bangalore', 'New York', 'London']
+            cities_data = {}
+            for city in comparison_cities:
+                try:
+                    city_data = fetch_data(city)
+                    cities_data[city] = city_data
+                except:
+                    continue
+
+            if cities_data:
+                comp_chart = create_comparative_analysis_chart(cities_data)
+                if comp_chart:
+                    st.plotly_chart(comp_chart, use_container_width=True)
+            else:
+                st.info("Comparative data not available at the moment.")
+
+            st.markdown("</div>", unsafe_allow_html=True)
 
             st.markdown("</div>", unsafe_allow_html=True)
         else:

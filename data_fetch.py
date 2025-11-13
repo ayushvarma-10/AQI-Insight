@@ -344,13 +344,13 @@ def search_city(city):
                 # Find the best match by checking if city name contains the input
                 for station in data['data']:
                     station_name = station['station']['name'].lower()
-                    if city.lower() in station_name and 'bangalore' not in station_name:
+                    city_lower = city.lower()
+                    # More flexible matching
+                    if (city_lower in station_name or
+                        any(word in station_name for word in city_lower.split()) or
+                        station_name.replace(',', '').replace(' ', '').find(city_lower.replace(' ', '')) != -1):
                         return station['uid']
-                # If no exact match, return the first one that doesn't contain 'bangalore'
-                for station in data['data']:
-                    if 'bangalore' not in station['station']['name'].lower():
-                        return station['uid']
-                # Fallback to first one
+                # If no good match, return the first available station
                 return data['data'][0]['uid']
     except requests.exceptions.RequestException:
         pass
@@ -359,7 +359,7 @@ def search_city(city):
 def get_aqi_data(city):
     """
     Fetch AQI data for a given city using WAQI API.
-    Falls back to mock data if API fails.
+    Falls back to mock data if API fails or returns invalid data.
     """
     if WAQI_API_KEY and WAQI_API_KEY != 'demo':
         station_id = search_city(city)
@@ -371,21 +371,39 @@ def get_aqi_data(city):
                     data = response.json()
                     if data['status'] == 'ok':
                         aqi_data = data['data']
-                        pollutants = aqi_data.get('iaqi', {})
-                        return {
-                            'aqi': aqi_data.get('aqi', 0),
-                            'pollutants': pollutants,
-                            'city': aqi_data.get('city', {}).get('name', city)
-                        }
+                        aqi = aqi_data.get('aqi', 0)
+                        # Check if AQI is valid (not 999 or out of range)
+                        if aqi != 999 and 0 <= aqi <= 500:
+                            pollutants = aqi_data.get('iaqi', {})
+                            city_name = aqi_data.get('city', {}).get('name', city)
+                            # Ensure we return the correct city name
+                            return {
+                                'aqi': aqi,
+                                'pollutants': pollutants,
+                                'city': city_name
+                            }
             except requests.exceptions.RequestException:
                 pass
-    # Fallback to mock data
-    city_lower = city.lower().replace(' ', '')
+
+    # Fallback to mock data with better city matching
+    city_lower = city.lower().replace(' ', '').replace(',', '').replace('-', '')
+    # Try exact match first
     if city_lower in MOCK_AQI_DATA:
-        return MOCK_AQI_DATA[city_lower]
-    else:
-        # Default to Shanghai if city not found
-        return MOCK_AQI_DATA['shanghai']
+        mock_data = MOCK_AQI_DATA[city_lower].copy()
+        mock_data['city'] = city  # Use the original city name
+        return mock_data
+
+    # Try partial matches for common variations
+    for mock_city, data in MOCK_AQI_DATA.items():
+        if city_lower in mock_city or mock_city in city_lower:
+            mock_data = data.copy()
+            mock_data['city'] = city  # Use the original city name
+            return mock_data
+
+    # Default to Shanghai if city not found
+    mock_data = MOCK_AQI_DATA['shanghai'].copy()
+    mock_data['city'] = city  # Use the original city name
+    return mock_data
 
 def get_weather_data(city):
     """
@@ -405,19 +423,67 @@ def get_weather_data(city):
                 'city': data['name']
             }
         else:
-            # Fallback to mock data
-            city_lower = city.lower().replace(' ', '')
+            # Fallback to mock data with better city matching
+            city_lower = city.lower().replace(' ', '').replace(',', '').replace('-', '')
+            # Try exact match first
             if city_lower in MOCK_WEATHER_DATA:
-                return MOCK_WEATHER_DATA[city_lower]
-            else:
-                return MOCK_WEATHER_DATA['shanghai']
+                mock_data = MOCK_WEATHER_DATA[city_lower].copy()
+                mock_data['city'] = city  # Use the original city name
+                return mock_data
+
+            # Try partial matches for common variations
+            for mock_city, data in MOCK_WEATHER_DATA.items():
+                if city_lower in mock_city or mock_city in city_lower:
+                    mock_data = data.copy()
+                    mock_data['city'] = city  # Use the original city name
+                    return mock_data
+
+            # Default to Shanghai if city not found
+            mock_data = MOCK_WEATHER_DATA['shanghai'].copy()
+            mock_data['city'] = city  # Use the original city name
+            return mock_data
     except requests.exceptions.RequestException:
-        # Fallback to mock data
-        city_lower = city.lower().replace(' ', '')
+        # Fallback to mock data with better city matching
+        city_lower = city.lower().replace(' ', '').replace(',', '').replace('-', '')
+        # Try exact match first
         if city_lower in MOCK_WEATHER_DATA:
-            return MOCK_WEATHER_DATA[city_lower]
-        else:
-            return MOCK_WEATHER_DATA['shanghai']
+            mock_data = MOCK_WEATHER_DATA[city_lower].copy()
+            mock_data['city'] = city  # Use the original city name
+            return mock_data
+
+        # Try partial matches for common variations
+        for mock_city, data in MOCK_WEATHER_DATA.items():
+            if city_lower in mock_city or mock_city in city_lower:
+                mock_data = data.copy()
+                mock_data['city'] = city  # Use the original city name
+                return mock_data
+
+        # Default to Shanghai if city not found
+        mock_data = MOCK_WEATHER_DATA['shanghai'].copy()
+        mock_data['city'] = city  # Use the original city name
+        return mock_data
+
+def get_historical_weather_data(city, days=30):
+    """
+    Fetch historical weather data for training the ML model.
+    """
+    historical_weather = []
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+
+    current_date = start_date
+    while current_date <= end_date:
+        # For simplicity, we'll use current weather data as proxy for historical
+        # In a real implementation, you'd use a historical weather API
+        weather_data = get_weather_data(city)
+        historical_weather.append({
+            'temperature': weather_data['temperature'],
+            'humidity': weather_data['humidity'],
+            'wind_speed': weather_data['wind_speed']
+        })
+        current_date += timedelta(days=1)
+
+    return historical_weather
 
 def get_historical_aqi_data(city, days=30):
     """
@@ -442,7 +508,13 @@ def get_historical_aqi_data(city, days=30):
                         if data['status'] == 'ok' and 'data' in data:
                             day_data = data['data']
                             if day_data and 'aqi' in day_data:
-                                historical_data.append(day_data['aqi'])
+                                # Extract AQI and pollutants
+                                aqi = day_data['aqi']
+                                pollutants = day_data.get('iaqi', {})
+                                historical_data.append({
+                                    'aqi': aqi,
+                                    'pollutants': pollutants
+                                })
                 except requests.exceptions.RequestException:
                     pass
                 current_date += timedelta(days=1)
@@ -451,7 +523,10 @@ def get_historical_aqi_data(city, days=30):
                 return historical_data
 
     # Fallback: Generate mock historical data based on current AQI
-    current_aqi = get_aqi_data(city)['aqi']
+    current_data = get_aqi_data(city)
+    current_aqi = current_data['aqi']
+    current_pollutants = current_data.get('pollutants', {})
+
     np.random.seed(42)  # For reproducible results
 
     # Generate time series with some noise and trends
@@ -465,7 +540,21 @@ def get_historical_aqi_data(city, days=30):
         trend = np.random.choice([-1, 0, 1]) * (base_aqi * 0.02)
 
         aqi_value = max(0, base_aqi + noise + daily_pattern + trend)
-        historical_data.append(int(aqi_value))
+
+        # Generate mock pollutants based on AQI
+        mock_pollutants = {}
+        for pollutant in ['pm25', 'pm10', 'o3', 'no2']:
+            if pollutant in current_pollutants:
+                base_level = current_pollutants[pollutant].get('v', 0)
+                pollutant_noise = np.random.normal(0, base_level * 0.2)
+                mock_pollutants[pollutant] = {'v': max(0, base_level + pollutant_noise)}
+            else:
+                mock_pollutants[pollutant] = {'v': np.random.uniform(0, 50)}
+
+        historical_data.append({
+            'aqi': int(aqi_value),
+            'pollutants': mock_pollutants
+        })
 
         # Slowly drift the base AQI
         base_aqi += np.random.normal(0, 0.5)
